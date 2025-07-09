@@ -1,0 +1,75 @@
+while (1) {
+    printf("while()\n");
+
+    // 1. Receber os dados do servidor (2048 bytes)
+    received = recv(SocketFD, (char*)input_signal, sizeof(int16_t) * N, 0);
+    if (received != sizeof(int16_t) * N) {
+        printf("Erro ao receber dados: %d bytes\n", received);
+        break;
+    }
+
+    printf("Dados recebidos: %d bytes\n", received);
+    printf("Amostras iniciais: [%d, %d, %d, %d]\n",
+           input_signal[0], input_signal[1], input_signal[2], input_signal[3]);
+
+    // 2. Conversão para float e bit-reversal
+    for (i = 0; i < N; i++) {
+        unsigned int ri = reverse_bits(i, 10); // log2(N)
+        real[ri] = (float)input_signal[i];
+        imag[ri] = 0.0f;
+    }
+
+    // 3. FFT usando Cooley-Tukey radix-2
+    alt_timestamp_start(); // Iniciar medição de tempo
+    alt_u32 start = alt_timestamp();
+
+    for (n = 2; n <= N; n <<= 1) {
+        float angle = -2.0f * M_PI / n;
+        float w_real_step = cosf(angle);
+        float w_imag_step = sinf(angle);
+
+        for (k = 0; k < N; k += n) {
+            float w_real = 1.0f;
+            float w_imag = 0.0f;
+
+            for (j = 0; j < n / 2; j++) {
+                int even = k + j;
+                int odd = k + j + n / 2;
+
+                float t_real = w_real * real[odd] - w_imag * imag[odd];
+                float t_imag = w_real * imag[odd] + w_imag * real[odd];
+
+                float u_real = real[even];
+                float u_imag = imag[even];
+
+                real[even] = u_real + t_real;
+                imag[even] = u_imag + t_imag;
+
+                real[odd] = u_real - t_real;
+                imag[odd] = u_imag - t_imag;
+
+                float temp_w_real = w_real;
+                w_real = w_real * w_real_step - w_imag * w_imag_step;
+                w_imag = temp_w_real * w_imag_step + w_imag * w_real_step;
+            }
+        }
+    }
+
+    alt_u32 end = alt_timestamp();
+    printf("FFT executada em %lu ciclos\n", end - start);
+
+    // 4. Calcular magnitude ao quadrado (evita sqrtf)
+    for (i = 0; i < N; i++) {
+        magnitude[i] = real[i] * real[i] + imag[i] * imag[i];
+    }
+
+    // 5. Enviar os dados de volta (4096 bytes de float)
+    sent = send(SocketFD, (char*)magnitude, sizeof(float) * N, 0);
+    if (sent != sizeof(float) * N) {
+        printf("Erro ao enviar resultado FFT: %d bytes\n", sent);
+        break;
+    }
+
+    printf("Dados FFT enviados: %d bytes\n", sent);
+    msleep(1);
+}
